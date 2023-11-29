@@ -16,7 +16,7 @@ from dataset import get_dataset
 
 @dataclass
 class MyArguments(TrainingArguments):
-    model_path : str = field(default='gpt2')
+    model_path : str = field(default='../ckpts/checkpoint-2000')
     prompt : str = field(default='The cat')
     max_length : int = field(default=50)
     num_return_sequences : int = field(default=1)
@@ -30,7 +30,7 @@ class MyArguments(TrainingArguments):
 @torch.no_grad()
 def generate(args):
     model = GPT2LMHeadModel.from_pretrained(args.model_path)
-    tokenizer = GPT2Tokenizer.from_pretrained(args.model_path)
+    tokenizer = GPT2Tokenizer.from_pretrained("../pretrain")
     model.to('cuda' if torch.cuda.is_available() else 'cpu')
     model.eval()
 

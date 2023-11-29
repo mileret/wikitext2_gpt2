@@ -1,56 +1,67 @@
-'''
-using perplexity as the evaluation metric to evaluate the fine-tuned model
-'''
-
-import os
 import torch
-import pdb
-from torch.utils.data import Dataset
-from transformers import GPT2Tokenizer
-from transformers import GPT2LMHeadModel, GPT2Config, Trainer, TrainingArguments, HfArgumentParser
-from transformers import DataCollatorForLanguageModeling
-from dataclasses import dataclass, field
+import torch.nn.functional as F
+from tqdm import tqdm
+from transformers import GPT2LMHeadModel, GPT2TokenizerFast
+from datasets import load_dataset
 
 from dataset import get_dataset
 
 
-@torch.no_grad()
-def compute_metrics(eval_pred):
-    '''
-    compute perplexity
-    '''
-    predictions, labels = eval_pred
-    predictions = torch.tensor(predictions)
-    labels = torch.tensor(labels)
-    mask = labels != -100
-    labels = labels[mask]
-    predictions = predictions[mask]
-    loss = torch.nn.functional.cross_entropy(predictions, labels)
-    perplexity = torch.exp(loss)
-    return {'perplexity': perplexity}
+def batched_perplexity(model, dataset, tokenizer, batch_size, stride):
+    device = model.device
+    encodings = tokenizer("\n\n".join(dataset["text"]), return_tensors="pt")
+    text_len = encodings.input_ids.size(1)
+    lls = []
+
+    for i in tqdm(range(0, text_len, batch_size * stride)):
+        begin_locs, end_locs, trg_lens = [], [], []
+        for j in range(batch_size):
+            j = i + j * stride
+            if j >= text_len:
+                break
+            begin_loc = max(j + stride - max_len, 0)
+            end_loc = min(j + stride, text_len)
+            trg_len = end_loc - j  # may be different from stride on last loop
+
+            begin_locs.append(begin_loc)
+            end_locs.append(end_loc)
+            trg_lens.append(trg_len)
+
+        input_ids = [encodings.input_ids[:, b:e] for b, e in zip(begin_locs, end_locs)]
+        target_end_locs = [sen.size(-1) for sen in input_ids]
+        input_ids = [
+            F.pad(sen, (0, max_len - sen.size(-1)), "constant", 0) for sen in input_ids
+        ] # we dont need attention mask as long as these padded token is not involved in loss calculation
+        input_ids = torch.stack(input_ids, dim=1).squeeze(0).to(device)
+
+        target_ids = torch.ones_like(input_ids) * -100 # -100 is the default ingore_index value in torch.nn.CrossEntropyLoss
+        for i, (b, e) in enumerate(zip(trg_lens, target_end_locs)):
+            labels = input_ids[i, -b:e].clone()
+            target_ids[i, -b:e] = labels
+
+        with torch.no_grad():
+            outputs = model(input_ids, labels=target_ids)
+            log_likelihood = outputs["loss"] * sum(trg_lens)
+
+        lls.append(log_likelihood)
+
+    ppl = torch.exp(sum(torch.stack(lls) / end_locs[-1]))
+    return ppl
 
 
-if __name__ == '__main__':
-    pretrain_path = '../pretrain'
-    from_local = True
-
-    # model = GPT2LMHeadModel.from_pretrained('../ckpts/checkpoint-1000')
-    model = GPT2LMHeadModel.from_pretrained('../ckpts/checkpoint-1000')
-    tokenizer = GPT2Tokenizer.from_pretrained(pretrain_path if from_local else 'gpt2')
-    dataset = get_dataset(from_local, pretrain_path)['test']
-
-    def tokenize(examples):
-        tokenized = tokenizer(examples['text'], padding=False, truncation=True, max_length=512)
-        return tokenized
+if __name__ == "__main__":
+    device = "cuda"
     
-    if tokenizer.pad_token is None:
-        tokenizer.add_special_tokens({'pad_token': tokenizer.eos_token})
-        model.resize_token_embeddings(len(tokenizer))
+    tokenizer = GPT2TokenizerFast.from_pretrained("../pretrain")
     
-    dataset = dataset.map(tokenize, batched=True, batch_size=len(dataset))
+    stride = 512
+    batch_size = 16
 
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    trainer = Trainer(model=model, data_collator=data_collator, eval_dataset=dataset, compute_metrics=compute_metrics)
-    result = trainer.evaluate()
-    print(result)
+    test = get_dataset(from_local=True, local_path='../pretrain')['test']
 
+    model_id = f"../ckpts/checkpoint-800"
+    model = GPT2LMHeadModel.from_pretrained(model_id).to(device)
+    max_len = model.config.n_positions
+
+    ppl = batched_perplexity(model, test, tokenizer, batch_size, stride)
+    print(f"--------------{id=},{ppl=}-------------")

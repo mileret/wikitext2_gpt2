@@ -1,2 +1,4 @@
 pretrain/
 ckpts/
+*/__pycache__
+*/run_train.sh
