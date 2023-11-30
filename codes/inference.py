@@ -16,8 +16,8 @@ from dataset import get_dataset
 
 @dataclass
 class MyArguments(TrainingArguments):
-    model_path : str = field(default='../ckpts/checkpoint-2000')
-    prompt : str = field(default='The cat')
+    model_path : str = field(default='../ckpts/checkpoint-best')
+    prompt : str = field(default='PKU is')
     max_length : int = field(default=50)
     num_return_sequences : int = field(default=1)
     repetition_penalty : float = field(default=1.0)

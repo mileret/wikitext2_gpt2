@@ -50,6 +50,11 @@ def batched_perplexity(model, dataset, tokenizer, batch_size, stride):
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ckpt", type=str, required=True)
+    args = parser.parse_args()
+
     device = "cuda"
     
     tokenizer = GPT2TokenizerFast.from_pretrained("../pretrain")
@@ -59,9 +64,9 @@ if __name__ == "__main__":
 
     test = get_dataset(from_local=True, local_path='../pretrain')['test']
 
-    model_id = f"../ckpts/checkpoint-800"
+    model_id = f"../ckpts/{args.ckpt}"
     model = GPT2LMHeadModel.from_pretrained(model_id).to(device)
     max_len = model.config.n_positions
 
     ppl = batched_perplexity(model, test, tokenizer, batch_size, stride)
-    print(f"--------------{id=},{ppl=}-------------")
+    print(f"--------------{ppl=}-------------")
